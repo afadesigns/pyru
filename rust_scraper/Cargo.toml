@@ -36,7 +36,6 @@ reqwest = { version = "0.13", default-features = false, features = [
     "zstd",
 ] }
 scraper = "0.26"
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
 mimalloc = { version = "0.1.48", default-features = false }
 
 [profile.release]

@@ -43,9 +43,7 @@ classifiers = [
     "Topic :: Utilities",
     "Typing :: Typed",
 ]
-dependencies = [
-    "click>=8.1,<9",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
@@ -69,6 +67,8 @@ Issues = "https://github.com/afadesigns/pyru/issues"
 
 [project.scripts]
 pyru = "pyru.cli:cli"
+# Back-compat alias for users who installed under the legacy "pyweb" name.
+pyweb = "pyru.cli:cli"
 
 [tool.maturin]
 manifest-path = "rust_scraper/Cargo.toml"
@@ -95,6 +95,8 @@ python_version = "3.9"
 strict = true
 files = ["python/pyru", "tests"]
 warn_unused_configs = true
+follow_imports = "skip"
+exclude = ['(^|/)\.venv', '(^|/)build/', '(^|/)dist/', '(^|/)target/']
 
 [[tool.mypy.overrides]]
 module = ["pyru._native"]

@@ -9,12 +9,13 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use futures_util::stream::{self, StreamExt};
 use mimalloc::MiMalloc;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use reqwest::{redirect, Client};
 use scraper::{Html, Selector};
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -158,29 +159,49 @@ pub async fn scrape_all(
         .build()
         .map_err(|e| ScrapeError::ClientBuild(format!("HTTP client build failed: {e}")))?;
 
+    let semaphore = Arc::new(Semaphore::new(concurrency));
+    let mut set: JoinSet<Outcome> = JoinSet::new();
+
+    for (index, url) in urls.into_iter().enumerate() {
+        let client = client.clone();
+        let selector = Arc::clone(&selector);
+        let permit_source = Arc::clone(&semaphore);
+        set.spawn(async move {
+            // Semaphore is never closed here; `expect` documents that invariant.
+            let _permit = permit_source
+                .acquire_owned()
+                .await
+                .expect("semaphore closed while tasks were running");
+            fetch_and_parse(client, url, selector, index).await
+        });
+    }
+
     let mut elements_out: Vec<Vec<String>> = (0..total).map(|_| Vec::new()).collect();
     let mut errors_out: Vec<String> = vec![String::new(); total];
     let mut latencies_out: Vec<u64> = vec![0; total];
 
-    let mut stream = stream::iter(urls.into_iter().enumerate().map(|(i, url)| {
-        let client = client.clone();
-        let selector = Arc::clone(&selector);
-        fetch_and_parse(client, url, selector, i)
-    }))
-    .buffer_unordered(concurrency);
-
-    while let Some(outcome) = stream.next().await {
-        let Outcome {
-            index,
-            elements,
-            error,
-            latency_ms,
-        } = outcome;
-        elements_out[index] = elements;
-        if let Some(msg) = error {
-            errors_out[index] = msg;
+    while let Some(join_res) = set.join_next().await {
+        match join_res {
+            Ok(Outcome {
+                index,
+                elements,
+                error,
+                latency_ms,
+            }) => {
+                elements_out[index] = elements;
+                if let Some(msg) = error {
+                    errors_out[index] = msg;
+                }
+                latencies_out[index] = latency_ms;
+            }
+            Err(join_err) => {
+                // A tokio task panicked or was cancelled. Record a diagnostic at
+                // whatever slot is still empty so the batch remains complete.
+                if let Some(slot) = errors_out.iter_mut().find(|s| s.is_empty()) {
+                    *slot = format!("task join error: {join_err}");
+                }
+            }
         }
-        latencies_out[index] = latency_ms;
     }
 
     Ok((elements_out, errors_out, latencies_out))
@@ -250,7 +271,8 @@ mod tests {
     use super::*;
 
     fn runtime() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_current_thread()
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()
             .expect("runtime builds")
@@ -331,5 +353,27 @@ mod tests {
             ))
             .expect("scrape_all handles concurrency=0");
         assert_eq!(errors.len(), 1);
+    }
+
+    #[test]
+    fn semaphore_caps_inflight_below_url_count() {
+        let rt = runtime();
+        // 50 URLs, concurrency=2, all go to a closed port. Should still return
+        // 50 per-URL errors and not hang or over-spawn.
+        let urls = (0..50).map(|_| "http://127.0.0.1:1/".to_string()).collect();
+        let (elements, errors, latencies) = rt
+            .block_on(scrape_all(
+                urls,
+                "p".into(),
+                2,
+                DEFAULT_USER_AGENT.into(),
+                200,
+                100,
+            ))
+            .expect("scrape_all completes");
+        assert_eq!(elements.len(), 50);
+        assert_eq!(errors.len(), 50);
+        assert_eq!(latencies.len(), 50);
+        assert!(errors.iter().all(|e| !e.is_empty()));
     }
 }
