@@ -48,10 +48,11 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Maximum Python version pyo3 0.28 exposes as an ABI3 feature. The wheel is
-# forward-compatible with any CPython >= this floor; the distribution's
-# `requires-python` gate (read from pyproject.toml) narrows installs further.
-_ABI3_MIN_TAG = "cp313"
+# ABI3 floor that matches the pyo3 feature in `native/Cargo.toml`. Keeping
+# the floor low maximises wheel forward-compatibility; the distribution's
+# `requires-python` gate (read from pyproject.toml) is what actually narrows
+# installs to 3.15+.
+_ABI3_MIN_TAG = "cp39"
 
 
 def _pyproject() -> dict[str, Any]:
