@@ -100,6 +100,15 @@ def _cargo_build(profile: str = "release") -> Path:
     # Lean on pyo3's ABI3 stable contract so we do not need a live interpreter
     # resolved beyond the one running this backend.
     env.setdefault("PYO3_USE_ABI3_FORWARD_COMPATIBILITY", "1")
+    # macOS: pyo3's cdylib link args do not always flow through when a stable-
+    # ABI extension is built without the maturin driver. Force the standard
+    # "let Python resolve `PyExc_*` at load time" linker flags so the build
+    # never falls back to static-resolving Python symbols that only exist in
+    # libpython.
+    if sys.platform == "darwin":
+        existing = env.get("RUSTFLAGS", "").strip()
+        macos_flags = "-C link-arg=-undefined -C link-arg=dynamic_lookup"
+        env["RUSTFLAGS"] = f"{existing} {macos_flags}".strip()
 
     cmd = [
         "cargo",
