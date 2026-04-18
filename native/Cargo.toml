@@ -16,7 +16,7 @@ default = []
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-pyo3 = { version = "0.28", features = ["abi3-py39"] }
+pyo3 = { version = "0.28", features = ["abi3-py313"] }
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 tokio = { version = "1.48", default-features = false, features = [
     "io-util",

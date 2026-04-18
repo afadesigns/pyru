@@ -6,68 +6,77 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   wheels:
-    name: Build wheels (${{ matrix.os }} - ${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
+    name: Build wheel (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            container: quay.io/pypa/manylinux_2_28_x86_64
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            container: ""
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            container: ""
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            container: ""
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
+      - name: Install rust + uv (manylinux container)
+        if: matrix.container != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
+        if: matrix.container == ''
+      - uses: astral-sh/setup-uv@v4
+        if: matrix.container == ''
+      - name: Install Python 3.15
+        shell: bash
+        run: uv python install 3.15
       - name: Build wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          command: build
-          target: ${{ matrix.target }}
-          args: --release --strip --out dist --manifest-path native/Cargo.toml
-          manylinux: auto
+        shell: bash
+        run: uv build --wheel --out-dir dist
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          name: wheel-${{ matrix.target }}
           path: dist/*.whl
+          if-no-files-found: error
 
   sdist:
-    name: Build source distribution
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: --out dist --manifest-path native/Cargo.toml
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install 3.15
+      - run: uv build --sdist --out-dir dist
       - uses: actions/upload-artifact@v4
         with:
           name: sdist
           path: dist/*.tar.gz
+          if-no-files-found: error
 
   publish:
-    name: Publish release artifacts
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [wheels, sdist]
     runs-on: ubuntu-latest
@@ -82,14 +91,12 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Attach artifacts to GitHub release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
-      - name: Publish to PyPI (trusted publishing)
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
           skip-existing: true
