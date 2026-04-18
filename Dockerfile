@@ -1,17 +1,62 @@
-# Use an official Python runtime as a parent image
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1.7
+ARG PYTHON_VERSION=3.12
+ARG RUST_VERSION=1.82
 
-# Set the working directory in the container
-WORKDIR /app
+FROM rust:${RUST_VERSION}-slim-bookworm AS builder
 
-# Copy the dependencies file to the working directory
-COPY requirements.txt .
+ENV CARGO_TERM_COLOR=always \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-# Install any needed dependencies specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        pkg-config \
+        python3 \
+        python3-dev \
+        python3-pip \
+        python3-venv \
+ && rm -rf /var/lib/apt/lists/*
 
-# Copy the content of the local src directory to the working directory
-COPY . .
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
 
-# Specify the command to run on container start
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
+RUN pip install --upgrade pip 'maturin>=1.7,<2'
+
+WORKDIR /src
+COPY rust_scraper ./rust_scraper
+COPY python ./python
+COPY pyproject.toml README.md LICENSE ./
+
+RUN maturin build --release --strip --out /wheels
+
+FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
+
+ARG APP_USER=pyru
+ARG APP_UID=10001
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN groupadd --system --gid ${APP_UID} ${APP_USER} \
+ && useradd --system --uid ${APP_UID} --gid ${APP_UID} --shell /sbin/nologin \
+            --home-dir /home/${APP_USER} --create-home ${APP_USER} \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /wheels /wheels
+RUN pip install --upgrade pip \
+ && pip install /wheels/*.whl \
+ && rm -rf /wheels
+
+USER ${APP_USER}
+WORKDIR /home/${APP_USER}
+
+ENTRYPOINT ["pyru"]
+CMD ["--help"]
