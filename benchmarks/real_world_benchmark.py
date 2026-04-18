@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from competitor import scrape_httpx  # noqa: E402
+
 from pyru import scrape_urls_concurrent  # noqa: E402
 
 DEFAULT_PORT = 8000

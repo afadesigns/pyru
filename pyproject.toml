@@ -127,6 +127,7 @@ max-statements = 40
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
+known-first-party = ["pyru"]
 
 [tool.ruff.lint.flake8-annotations]
 allow-star-arg-any = false
