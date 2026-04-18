@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
-ARG PYTHON_VERSION=3.12
-ARG RUST_VERSION=1.82
+ARG PYTHON_VERSION=3.13
+ARG RUST_VERSION=1.88
 
 FROM rust:${RUST_VERSION}-slim-bookworm AS builder
 
@@ -23,12 +23,11 @@ RUN apt-get update \
 
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
-
 RUN pip install --upgrade pip 'maturin>=1.7,<2'
 
 WORKDIR /src
-COPY rust_scraper ./rust_scraper
-COPY python ./python
+COPY native ./native
+COPY pyru ./pyru
 COPY pyproject.toml README.md LICENSE ./
 
 RUN maturin build --release --strip --out /wheels

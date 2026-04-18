@@ -1,9 +1,9 @@
 [package]
-name = "pyru_native"
+name = "pyru-native"
 version = "1.0.0"
 edition = "2021"
 rust-version = "1.82"
-description = "Native Rust core for the pyru / pyweb-scraper Python CLI"
+description = "Native Rust core for the pyru Python CLI"
 license = "MIT"
 publish = false
 

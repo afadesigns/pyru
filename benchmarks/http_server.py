@@ -12,7 +12,7 @@ from aiohttp import web
 ROOT = Path(__file__).resolve().parent
 
 
-async def handle(request: web.Request) -> web.Response:
+async def handle(request: web.Request) -> web.Response:  # noqa: RUF029 - aiohttp handler contract requires async
     del request
     body = (ROOT / "test_page.html").read_text(encoding="utf-8")
     return web.Response(text=body, content_type="text/html")

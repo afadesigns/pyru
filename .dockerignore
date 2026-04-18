@@ -14,7 +14,7 @@ htmlcov
 dist
 build
 target
-rust_scraper/target
+native/target
 wheels
 benchmarks
 tests

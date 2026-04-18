@@ -10,7 +10,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: cargo
-    directory: /rust_scraper
+    directory: /native
     schedule:
       interval: weekly
     open-pull-requests-limit: 10

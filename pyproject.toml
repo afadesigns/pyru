@@ -3,11 +3,11 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "pyweb-scraper"
+name = "pyru-scraper"
 version = "1.0.0"
 description = "PyRu — a high-throughput, low-latency Python web scraper CLI powered by an async Rust core."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.13"
 license = { file = "LICENSE" }
 authors = [
     { name = "Andreas Faulhaber", email = "afadesign.official@gmail.com" },
@@ -32,11 +32,9 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Rust",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Software Development :: Libraries",
@@ -45,21 +43,6 @@ classifiers = [
 ]
 dependencies = []
 
-[project.optional-dependencies]
-dev = [
-    "maturin>=1.7,<2",
-    "mypy>=1.11",
-    "pytest>=8",
-    "pytest-cov>=5",
-    "ruff>=0.6",
-]
-benchmarks = [
-    "aiohttp>=3.10",
-    "httpx>=0.27",
-    "numpy>=2.0",
-    "selectolax>=0.3.21",
-]
-
 [project.urls]
 Homepage = "https://github.com/afadesigns/pyru"
 Repository = "https://github.com/afadesigns/pyru"
@@ -67,41 +50,131 @@ Issues = "https://github.com/afadesigns/pyru/issues"
 
 [project.scripts]
 pyru = "pyru.cli:cli"
-# Back-compat alias for users who installed under the legacy "pyweb" name.
-pyweb = "pyru.cli:cli"
+
+[dependency-groups]
+dev = ["ruff>=0.8", "ty>=0.0.31"]
+test = ["pytest>=9.0", "pytest-cov>=5"]
+benchmarks = [
+    "aiohttp>=3.11",
+    "httpx>=0.28",
+    "numpy>=2.0",
+    "selectolax>=0.3.25",
+]
+ci = [
+    { include-group = "dev" },
+    { include-group = "test" },
+]
 
 [tool.maturin]
-manifest-path = "rust_scraper/Cargo.toml"
-python-source = "python"
+manifest-path = "native/Cargo.toml"
+python-packages = ["pyru"]
 module-name = "pyru._native"
 features = ["extension-module"]
 strip = true
 
-[tool.ruff]
-line-length = 100
-target-version = "py39"
-extend-exclude = ["rust_scraper/target"]
-
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
-ignore = ["S101"]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S603", "S607"]
-"benchmarks/**" = ["S603", "S607", "T201"]
-
-[tool.mypy]
-python_version = "3.9"
-strict = true
-files = ["python/pyru", "tests"]
-warn_unused_configs = true
-follow_imports = "skip"
-exclude = ['(^|/)\.venv', '(^|/)build/', '(^|/)dist/', '(^|/)target/']
-
-[[tool.mypy.overrides]]
-module = ["pyru._native"]
-ignore_missing_imports = true
+[tool.uv]
+required-version = ">=0.11"
+resolution = "highest"
+prerelease = "allow"
+default-groups = ["dev", "test"]
 
 [tool.pytest.ini_options]
-addopts = "-ra -q"
+addopts = "-ra -q --strict-markers --strict-config"
 testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+fix = false
+target-version = "py313"
+unsafe-fixes = false
+
+[tool.ruff.lint]
+preview = true
+select = ["ALL"]
+ignore = [
+    "COM812",  # conflicts with ruff format
+    "ISC001",  # conflicts with ruff format
+    "D203",    # incompatible with D211
+    "D213",    # incompatible with D212
+    "T201",    # print() is the CLI's output mechanism
+    "CPY001",  # no copyright banner required
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.Dict".msg = "Use `dict[K, V]` (PEP 585)."
+"typing.FrozenSet".msg = "Use `frozenset[T]` (PEP 585)."
+"typing.List".msg = "Use `list[T]` (PEP 585)."
+"typing.Optional".msg = "Use `T | None` (PEP 604)."
+"typing.Set".msg = "Use `set[T]` (PEP 585)."
+"typing.Tuple".msg = "Use `tuple[...]` (PEP 585)."
+"typing.Type".msg = "Use `type[T]` (PEP 585)."
+"typing.Union".msg = "Use `X | Y` (PEP 604)."
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 8
+max-branches = 12
+max-locals = 15
+max-positional-args = 5
+max-returns = 6
+max-statements = 40
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.ruff.lint.flake8-annotations]
+allow-star-arg-any = false
+ignore-fully-untyped = false
+mypy-init-return = false
+suppress-dummy-args = false
+suppress-none-returning = false
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "ANN",     # test helpers don't need full annotations
+    "D",       # tests don't need docstrings
+    "INP001",  # tests directory is a package, not a namespace
+    "PLR2004", # magic values are common in assertions
+    "S101",    # `assert` is the point of pytest
+]
+"benchmarks/**" = [
+    "D",
+    "INP001",
+    "S404",
+    "S603",
+    "S607",
+    "T201",
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ty.environment]
+python-version = "3.13"
+
+[tool.ty.src]
+include = ["pyru", "tests"]
+
+[tool.ty.rules]
+all = "error"
+deprecated = "error"
+invalid-argument-type = "error"
+invalid-exception-caught = "error"
+invalid-return-type = "error"
+missing-argument = "error"
+possibly-unresolved-reference = "error"
+redundant-cast = "error"
+unresolved-attribute = "error"
+unresolved-import = "error"
+unresolved-reference = "error"
+unused-ignore-comment = "error"
+
+[tool.ty.terminal]
+error-on-warning = true
+output-format = "full"

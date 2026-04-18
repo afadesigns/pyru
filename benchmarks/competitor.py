@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import httpx
 from selectolax.parser import HTMLParser
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 async def _fetch(client: httpx.AsyncClient, url: str) -> tuple[str, float]:
@@ -19,7 +22,9 @@ async def _fetch(client: httpx.AsyncClient, url: str) -> tuple[str, float]:
 
 
 async def scrape_httpx(
-    urls: Iterable[str], selector: str, concurrency: int
+    urls: Iterable[str],
+    selector: str,
+    concurrency: int,
 ) -> tuple[list[list[str]], list[float]]:
     limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=concurrency)
     timeout = httpx.Timeout(10.0, connect=5.0)
@@ -36,6 +41,8 @@ async def scrape_httpx(
 
 
 def run_httpx_benchmark(
-    urls: Iterable[str], selector: str, concurrency: int = 50
+    urls: Iterable[str],
+    selector: str,
+    concurrency: int = 50,
 ) -> tuple[list[list[str]], list[float]]:
     return asyncio.run(scrape_httpx(urls, selector, concurrency))
