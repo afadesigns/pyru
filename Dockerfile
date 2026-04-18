@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.7
 ARG RUST_VERSION=1.88
-ARG PYTHON_VERSION=3.15
+# Pin the alpha build explicitly: `uv python install 3.15` can resolve to
+# the newest stable <=3.15 that uv's download catalogue knows about
+# (currently 3.14.x, which violates our `requires-python = ">=3.15.0a8"`).
+ARG PYTHON_VERSION=3.15.0a8
 
 FROM rust:${RUST_VERSION}-slim-bookworm AS builder
 
