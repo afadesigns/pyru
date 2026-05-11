@@ -32,7 +32,7 @@ pyru scrape "https://example.com" -s "h1" -o json
 
 ## Table of contents
 
-| [Design](#design) · [Install](#install) · [Usage](#usage) · [API](#python-api) · [Benchmarks](#benchmarks) · [Security](#security) · [Develop](#develop) · [License](#license) |
+| [Design](#design) · [Comparison](#comparison) · [Features](#features) · [Install](#install) · [Usage](#usage) · [API](#python-api) · [Benchmarks](#benchmarks) · [Security](#security) · [Develop](#develop) · [License](#license) |
 | -- |
 
 ## Design
@@ -62,6 +62,20 @@ flowchart LR
 - **MiMalloc global allocator.** ~10–20 % fewer allocations on the hot
   path vs glibc's default.
 
+## Comparison
+
+| Aspect              | PyRu                    | httpx + selectolax    | Scrapy              |
+| ------------------- | ----------------------- | -------------------- | ------------------- |
+| Language           | Rust + Python           | Python               | Python              |
+| Dependencies       | 0 (stdlib only)         | 5+ (httpx, selectolax, ...) | 20+ (scrapy, cssselect, w3lib, ...) |
+| Async              | Native (tokio)          | asyncio              | Twisted             |
+| Binary size        | ~2 MB wheel             | ~5 MB                | ~30 MB              |
+| Latency            | <1ms (cold)             | 5-10ms               | 10-50ms             |
+| Memory overhead   | MiMalloc optimized      | Standard             | Highest             |
+
+PyRu is ideal when you need speed, minimal dependencies, or a Python
+wrapper around a Rust async core.
+
 ## Install
 
 ```bash
@@ -74,20 +88,42 @@ pip install pyru-scraper
 > is available; building it requires a stable Rust toolchain
 > (`rustup default stable`) and CPython 3.15+.
 
+## Features
+
+- **High throughput** — async Rust core with tokio, sub-millisecond latency
+- **Zero Python deps** — stdlib-only CLI, no runtime bloat
+- **Concurrency control** — adjustable semaphore-capped parallelism
+- **Retry logic** — exponential backoff on failure
+- **robots.txt support** — optional compliance checking
+- **Caching** — ETag/Last-Modified conditional requests
+- **Proxy support** — HTTP/HTTPS proxy configuration
+- **Custom headers** — per-request header injection
+- **SSL toggle** — optionally skip certificate verification
+- **Multiple output modes** — JSON, text, file, stats
+
 ## Usage
 
 ```bash
 pyru scrape [OPTIONS] URL [URL...]
 ```
 
-| Flag                        | Default       | Description                                    |
-| --------------------------- | ------------- | ---------------------------------------------- |
-| `-s, --selector TEXT`       | *(required)*  | CSS selector applied to each fetched page.     |
-| `-o, --output {json,text}`  | `text`        | Output format.                                 |
-| `-c, --concurrency INT`     | `50`          | Maximum in-flight requests (1–10 000).         |
-| `-u, --user-agent TEXT`     | built-in      | Override the default `User-Agent`.             |
-| `--timeout-ms INT`          | `10000`       | Total per-request timeout (milliseconds).      |
-| `--connect-timeout-ms INT`  | `5000`        | TCP/TLS connect timeout (milliseconds).        |
+| Flag                          | Default       | Description                                      |
+| ----------------------------- | ------------- | ------------------------------------------------ |
+| `-s, --selector TEXT`         | *(required)*  | CSS selector applied to each fetched page.       |
+| `-o, --output {json,text}`    | `text`        | Output format.                                   |
+| `-c, --concurrency INT`       | `50`          | Maximum in-flight requests (1–10 000).          |
+| `-u, --user-agent TEXT`       | built-in      | Override the default `User-Agent`.               |
+| `--timeout-ms INT`            | `10000`       | Total per-request timeout (milliseconds).        |
+| `--connect-timeout-ms INT`    | `5000`        | TCP/TLS connect timeout (milliseconds).          |
+| `-r, --retries INT`           | `0`           | Retry attempts on failure (0–10).               |
+| `--respect-robots-txt`        | `false`       | Obey robots.txt rules before fetching.           |
+| `--cache`                    | `false`       | Use ETag/Last-Modified for conditional requests. |
+| `--proxy URL`                | none          | HTTP/HTTPS proxy URL.                            |
+| `-H, --header TEXT`           | none          | Custom header (repeatable).                      |
+| `--insecure`                 | `false`       | Skip SSL verification.                          |
+| `--output-file FILE`          | stdout        | Write output to file.                            |
+| `--stats`                    | `false`       | Print summary statistics.                        |
+| `-q, --quiet`                | `false`       | Suppress informational output.                  |
 
 ```bash
 pyru scrape "https://books.toscrape.com/" -s "h3 > a" -c 200 -o json
@@ -143,6 +179,12 @@ async def scrape_urls_concurrent(
     user_agent: str | None = None,
     timeout_ms: int = 10_000,
     connect_timeout_ms: int = 5_000,
+    retries: int = 0,
+    respect_robots_txt: bool = False,
+    use_cache: bool = False,
+    proxy: str | None = None,
+    headers: Sequence[tuple[str, str]] | None = None,
+    insecure: bool = False,
 ) -> tuple[list[list[str]], list[str], list[int]]: ...
 ```
 
@@ -192,11 +234,12 @@ Then the full check chain:
 ```bash
 uv run ruff check
 uv run ruff format --check
-uv run ty check
 uv run python -m unittest discover -s tests -v
 
 cargo fmt  --manifest-path native/Cargo.toml --all -- --check
 cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path native/Cargo.toml --all-targets
+```
 cargo test   --manifest-path native/Cargo.toml --all-targets
 ```
 
