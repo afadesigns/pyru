@@ -93,6 +93,16 @@ class CLITests(unittest.TestCase):
             "--user-agent",
             "--timeout-ms",
             "--connect-timeout-ms",
+            "--retries",
+            "--respect-robots-txt",
+            "--cache",
+            "--proxy",
+            "--header",
+            "--output-file",
+            "--insecure",
+            "--stats",
+            "-q",
+            "--quiet",
         ):
             self.assertIn(flag, out, msg=f"missing {flag} in help output")
 

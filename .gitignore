@@ -9,6 +9,9 @@ __pycache__/
 *.manifest
 *.spec
 
+# Source assets
+pyru.png
+
 # Distribution / packaging
 build/
 develop-eggs/

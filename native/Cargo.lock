@@ -1097,6 +1097,7 @@ dependencies = [
  "reqwest",
  "scraper",
  "tokio",
+ "url",
 ]
 
 [[package]]

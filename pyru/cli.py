@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import pathlib
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING
@@ -30,6 +31,8 @@ _DEFAULT_CONCURRENCY = 50
 _MAX_CONCURRENCY = 10_000
 _DEFAULT_TIMEOUT_MS = 10_000
 _DEFAULT_CONNECT_TIMEOUT_MS = 5_000
+_DEFAULT_RETRIES = 0
+_MAX_RETRIES = 10
 
 _EXIT_OK = 0
 _EXIT_RUNTIME_ERROR = 1
@@ -63,6 +66,14 @@ def _concurrency(value: str) -> int:
     n = _positive_int(value)
     if n > _MAX_CONCURRENCY:
         msg = f"must be <= {_MAX_CONCURRENCY}, got {n}"
+        raise argparse.ArgumentTypeError(msg)
+    return n
+
+
+def _retries(value: str) -> int:
+    n = _positive_int(value)
+    if n > _MAX_RETRIES:
+        msg = f"must be <= {_MAX_RETRIES}, got {n}"
         raise argparse.ArgumentTypeError(msg)
     return n
 
@@ -132,6 +143,62 @@ def _add_scrape_subcommand(
         default=_DEFAULT_CONNECT_TIMEOUT_MS,
         help=f"TCP/TLS connect timeout in milliseconds (default: {_DEFAULT_CONNECT_TIMEOUT_MS}).",
     )
+    scrape.add_argument(
+        "-r",
+        "--retries",
+        type=_retries,
+        default=_DEFAULT_RETRIES,
+        help=f"Retry attempts on failure (0-{_MAX_RETRIES}, default: {_DEFAULT_RETRIES}).",
+    )
+    scrape.add_argument(
+        "--respect-robots-txt",
+        action="store_true",
+        default=False,
+        help="Obey robots.txt rules before fetching.",
+    )
+    scrape.add_argument(
+        "--cache",
+        action="store_true",
+        default=False,
+        help="Use ETag/Last-Modified headers for conditional requests.",
+    )
+    scrape.add_argument(
+        "--proxy",
+        default=None,
+        help="HTTP/HTTPS proxy URL (e.g., http://proxy:8080).",
+    )
+    scrape.add_argument(
+        "-H",
+        "--header",
+        action="append",
+        default=[],
+        dest="headers",
+        help="Custom header (can be used multiple times).",
+    )
+    scrape.add_argument(
+        "--output-file",
+        default=None,
+        help="Write output to file instead of stdout.",
+    )
+    scrape.add_argument(
+        "--insecure",
+        action="store_true",
+        default=False,
+        help="Allow insecure server connections (skip SSL verification).",
+    )
+    scrape.add_argument(
+        "--stats",
+        action="store_true",
+        default=False,
+        help="Print summary statistics after scraping.",
+    )
+    scrape.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        default=False,
+        help="Suppress informational output.",
+    )
     scrape.set_defaults(func=_cmd_scrape)
 
 
@@ -163,9 +230,23 @@ async def _run(args: argparse.Namespace, urls: list[str]) -> int:
         args.user_agent,
         args.timeout_ms,
         args.connect_timeout_ms,
+        args.retries,
+        args.respect_robots_txt,
+        args.cache,
+        args.proxy,
+        args.headers,
+        args.insecure,
     )
 
     exit_code = _EXIT_OK
+    output_lines: list[str] = []
+
+    if args.quiet:
+        for elements in results:
+            for elem in elements:
+                print(elem)
+        return exit_code
+
     for url, elements, err, latency in zip(
         urls,
         results,
@@ -175,12 +256,47 @@ async def _run(args: argparse.Namespace, urls: list[str]) -> int:
     ):
         if err:
             exit_code = _EXIT_RUNTIME_ERROR
-            print(f"[error] {url} ({latency} ms): {err}", file=sys.stderr)
+            line = f"[error] {url} ({latency} ms): {err}"
+            output_lines.append(line)
+            print(line, file=sys.stderr)
             continue
         if args.output == "json":
-            _emit_json(url, args.selector, latency, elements)
+            line = json.dumps(
+                {
+                    "url": url,
+                    "selector": args.selector,
+                    "latency_ms": latency,
+                    "elements": elements,
+                },
+                ensure_ascii=False,
+            )
+            output_lines.append(line)
+            print(line)
         else:
-            _emit_text(url, latency, elements)
+            line = f"\n{url}  ({latency} ms)"
+            output_lines.append(line)
+            print(line)
+            for elem in elements:
+                line = f"- {elem}"
+                output_lines.append(line)
+                print(line)
+
+    if args.output_file:
+        pathlib.Path(args.output_file).write_text(  # noqa: ASYNC240
+            "\n".join(output_lines), encoding="utf-8"
+        )
+
+    if args.stats:
+        success_count = sum(1 for e in errors if not e)
+        error_count = len(errors) - success_count
+        total_elements = sum(len(r) for r in results)
+        total_latency = sum(latencies)
+        avg_latency = total_latency / len(latencies) if latencies else 0
+        print("\n--- Stats ---", file=sys.stderr)
+        print(f"URLs: {len(urls)}", file=sys.stderr)
+        print(f"Success: {success_count}, Errors: {error_count}", file=sys.stderr)
+        print(f"Elements: {total_elements}", file=sys.stderr)
+        print(f"Avg latency: {avg_latency:.1f} ms", file=sys.stderr)
 
     return exit_code
 
