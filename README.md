@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/banner.png" alt="PyRu - High-performance Python web scraper" style="width: 100%; max-width: 1600px;">
+  <img src="assets/banner.png" alt="PyRu - High-performance Python web scraper" width="1280" height="640">
 </div>
 
 <br>
