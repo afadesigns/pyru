@@ -51,7 +51,7 @@ Issues = "https://github.com/afadesigns/pyru/issues"
 pyru = "pyru.cli:cli"
 
 [dependency-groups]
-dev = ["ruff>=0.8", "ty>=0.0.31"]
+dev = ["ruff>=0.8"]
 benchmarks = [
     "aiohttp>=3.11",
     "httpx>=0.28",

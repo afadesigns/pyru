@@ -37,6 +37,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 scraper = "0.26"
 mimalloc = { version = "0.1.50", default-features = false }
+url = "2"
 
 [profile.release]
 codegen-units = 1

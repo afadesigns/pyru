@@ -1,5 +1,9 @@
 # PyRu
 
+<div align="center">
+  <img src="assets/banner.png" width="800" alt="PyRu - High-performance Python web scraper">
+</div>
+
 > A low-latency, zero-Python-dependency web scraper CLI — Rust engine,
 > async end-to-end, stdlib-only front-end.
 

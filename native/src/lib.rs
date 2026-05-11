@@ -28,9 +28,12 @@ const DEFAULT_USER_AGENT: &str = concat!(
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_CONCURRENCY: usize = 50;
+const DEFAULT_RETRIES: u32 = 0;
 const MAX_CONCURRENCY: usize = 10_000;
+const MAX_RETRIES: u32 = 10;
 const MAX_POOL_IDLE_PER_HOST: usize = 256;
 const MAX_REDIRECTS: usize = 10;
+const RETRY_BASE_DELAY_MS: u64 = 500;
 
 pub type ScrapeOutput = (Vec<Vec<String>>, Vec<String>, Vec<u64>);
 
@@ -58,49 +61,128 @@ struct Outcome {
     latency_ms: u64,
 }
 
-async fn fetch_and_parse(
+async fn check_robots_txt(client: &Client, url: &str, user_agent: &str) -> bool {
+    let parsed = match url::Url::parse(url) {
+        Ok(p) => p,
+        Err(_) => return true,
+    };
+    let robots_url = format!(
+        "{}://{}/robots.txt",
+        parsed.scheme(),
+        parsed.host_str().unwrap_or("")
+    );
+    let req = client
+        .get(&robots_url)
+        .header("User-Agent", user_agent)
+        .build();
+    let Ok(req) = req else { return true };
+    let response = client.execute(req).await;
+    let Ok(resp) = response else { return true };
+    if !resp.status().is_success() {
+        return true;
+    }
+    let Ok(body) = resp.text().await else {
+        return true;
+    };
+    for line in body.lines() {
+        let stripped = line.trim();
+        if stripped.starts_with("Disallow:") {
+            let path = stripped.strip_prefix("Disallow:").unwrap().trim();
+            if path.is_empty() || url.contains(path) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+async fn fetch_with_retry(
     client: Client,
     url: String,
     selector: Arc<Selector>,
     index: usize,
+    retries: u32,
+    use_cache: bool,
+    headers: Vec<(String, String)>,
 ) -> Outcome {
-    let started = Instant::now();
-    let response = match client.get(&url).send().await {
-        Ok(resp) => resp,
-        Err(e) => {
-            return Outcome {
-                index,
-                elements: Vec::new(),
-                error: Some(format!("request failed: {e}")),
-                latency_ms: started.elapsed().as_millis() as u64,
-            };
+    let mut last_error = None;
+    for attempt in 0..=retries {
+        let result = fetch_single(
+            &client,
+            &url,
+            Arc::clone(&selector),
+            index,
+            use_cache,
+            None,
+            None,
+            &headers,
+        )
+        .await;
+        match result {
+            Ok(outcome) => return outcome,
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < retries {
+                    let delay = RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
+            }
         }
-    };
+    }
+    Outcome {
+        index,
+        elements: Vec::new(),
+        error: last_error,
+        latency_ms: 0,
+    }
+}
 
+#[allow(clippy::too_many_arguments)]
+async fn fetch_single(
+    client: &Client,
+    url: &str,
+    selector: Arc<Selector>,
+    index: usize,
+    use_cache: bool,
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+    headers: &[(String, String)],
+) -> Result<Outcome, String> {
+    let started = Instant::now();
+    let mut request = client.get(url);
+    if let Some(e) = etag {
+        request = request.header("If-None-Match", e);
+    }
+    if let Some(lm) = last_modified {
+        request = request.header("If-Modified-Since", lm);
+    }
+    if !use_cache {
+        request = request.header("Cache-Control", "no-cache");
+    }
+    for (k, v) in headers {
+        request = request.header(k.as_str(), v.as_str());
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
     let status = response.status();
-    if !status.is_success() {
-        return Outcome {
+    if status.as_u16() == 304 && use_cache {
+        return Ok(Outcome {
             index,
             elements: Vec::new(),
-            error: Some(format!("HTTP {status}")),
+            error: None,
             latency_ms: started.elapsed().as_millis() as u64,
-        };
+        });
     }
-
-    let body = match response.text().await {
-        Ok(body) => body,
-        Err(e) => {
-            return Outcome {
-                index,
-                elements: Vec::new(),
-                error: Some(format!("body read failed: {e}")),
-                latency_ms: started.elapsed().as_millis() as u64,
-            };
-        }
-    };
-
+    if !status.is_success() {
+        return Err(format!("HTTP {status}"));
+    }
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("body read failed: {e}"))?;
     let latency_ms = started.elapsed().as_millis() as u64;
-
     let parsed = tokio::task::spawn_blocking(move || -> Vec<String> {
         let document = Html::parse_document(&body);
         document
@@ -108,24 +190,29 @@ async fn fetch_and_parse(
             .map(|element| element.text().collect::<String>())
             .collect()
     })
-    .await;
-
-    match parsed {
-        Ok(elements) => Outcome {
-            index,
-            elements,
-            error: None,
-            latency_ms,
-        },
-        Err(e) => Outcome {
-            index,
-            elements: Vec::new(),
-            error: Some(format!("parser task failed: {e}")),
-            latency_ms,
-        },
-    }
+    .await
+    .map_err(|e| format!("parser task failed: {e}"))?;
+    Ok(Outcome {
+        index,
+        elements: parsed,
+        error: None,
+        latency_ms,
+    })
 }
 
+async fn fetch_and_parse(
+    client: Client,
+    url: String,
+    selector: Arc<Selector>,
+    index: usize,
+    retries: u32,
+    use_cache: bool,
+    headers: Vec<(String, String)>,
+) -> Outcome {
+    fetch_with_retry(client, url, selector, index, retries, use_cache, headers).await
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn scrape_all(
     urls: Vec<String>,
     selector_str: String,
@@ -133,6 +220,12 @@ pub async fn scrape_all(
     user_agent: String,
     timeout_ms: u64,
     connect_timeout_ms: u64,
+    retries: u32,
+    respect_robots_txt: bool,
+    use_cache: bool,
+    proxy: Option<String>,
+    headers: Vec<(String, String)>,
+    insecure: bool,
 ) -> Result<ScrapeOutput, ScrapeError> {
     let total = urls.len();
     if total == 0 {
@@ -146,8 +239,8 @@ pub async fn scrape_all(
     })?;
     let selector = Arc::new(selector);
 
-    let client = Client::builder()
-        .user_agent(user_agent)
+    let mut client_builder = Client::builder()
+        .user_agent(user_agent.clone())
         .tcp_nodelay(true)
         .tcp_keepalive(Duration::from_secs(30))
         .pool_idle_timeout(Duration::from_secs(60))
@@ -156,8 +249,17 @@ pub async fn scrape_all(
         .connect_timeout(Duration::from_millis(connect_timeout_ms.max(1)))
         .redirect(redirect::Policy::limited(MAX_REDIRECTS))
         .https_only(false)
+        .danger_accept_invalid_certs(insecure);
+    if let Some(p) = &proxy {
+        if let Ok(proxy) = reqwest::Proxy::http(p) {
+            client_builder = client_builder.proxy(proxy);
+        }
+    }
+    let client = client_builder
         .build()
         .map_err(|e| ScrapeError::ClientBuild(format!("HTTP client build failed: {e}")))?;
+
+    let retries = retries.clamp(0, MAX_RETRIES);
 
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut set: JoinSet<Outcome> = JoinSet::new();
@@ -166,13 +268,23 @@ pub async fn scrape_all(
         let client = client.clone();
         let selector = Arc::clone(&selector);
         let permit_source = Arc::clone(&semaphore);
+        let user_agent = user_agent.clone();
+        let headers = headers.clone();
         set.spawn(async move {
             // Semaphore is never closed here; `expect` documents that invariant.
             let _permit = permit_source
                 .acquire_owned()
                 .await
                 .expect("semaphore closed while tasks were running");
-            fetch_and_parse(client, url, selector, index).await
+            if respect_robots_txt && !check_robots_txt(&client, &url, &user_agent).await {
+                return Outcome {
+                    index,
+                    elements: Vec::new(),
+                    error: Some("disallowed by robots.txt".to_string()),
+                    latency_ms: 0,
+                };
+            }
+            fetch_and_parse(client, url, selector, index, retries, use_cache, headers).await
         });
     }
 
@@ -229,9 +341,17 @@ fn lift(err: ScrapeError) -> PyErr {
         user_agent = None,
         timeout_ms = DEFAULT_TIMEOUT_MS,
         connect_timeout_ms = DEFAULT_CONNECT_TIMEOUT_MS,
+        retries = DEFAULT_RETRIES,
+        respect_robots_txt = false,
+        use_cache = false,
+        proxy = None,
+        headers = None,
+        insecure = false,
     ),
     text_signature = "(urls, selector, concurrency=50, user_agent=None, \
-                      timeout_ms=10000, connect_timeout_ms=5000)"
+                      timeout_ms=10000, connect_timeout_ms=5000, \
+                      retries=0, respect_robots_txt=False, use_cache=False, \
+                      proxy=None, headers=None, insecure=False)"
 )]
 #[allow(clippy::too_many_arguments)]
 fn scrape_urls_concurrent<'py>(
@@ -242,8 +362,15 @@ fn scrape_urls_concurrent<'py>(
     user_agent: Option<String>,
     timeout_ms: u64,
     connect_timeout_ms: u64,
+    retries: u32,
+    respect_robots_txt: bool,
+    use_cache: bool,
+    proxy: Option<String>,
+    headers: Option<Vec<(String, String)>>,
+    insecure: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let user_agent = user_agent.unwrap_or_else(|| DEFAULT_USER_AGENT.to_owned());
+    let headers = headers.unwrap_or_default();
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         scrape_all(
             urls,
@@ -252,6 +379,12 @@ fn scrape_urls_concurrent<'py>(
             user_agent,
             timeout_ms,
             connect_timeout_ms,
+            retries,
+            respect_robots_txt,
+            use_cache,
+            proxy,
+            headers,
+            insecure,
         )
         .await
         .map_err(lift)
@@ -289,6 +422,12 @@ mod tests {
                 DEFAULT_USER_AGENT.into(),
                 DEFAULT_TIMEOUT_MS,
                 DEFAULT_CONNECT_TIMEOUT_MS,
+                0,
+                false,
+                false,
+                None,
+                vec![],
+                false,
             ))
             .expect("scrape_all succeeds");
         assert!(elements.is_empty());
@@ -307,6 +446,12 @@ mod tests {
                 DEFAULT_USER_AGENT.into(),
                 DEFAULT_TIMEOUT_MS,
                 DEFAULT_CONNECT_TIMEOUT_MS,
+                0,
+                false,
+                false,
+                None,
+                vec![],
+                false,
             ))
             .expect_err("selector must fail");
         assert!(
@@ -326,6 +471,12 @@ mod tests {
                 DEFAULT_USER_AGENT.into(),
                 200,
                 100,
+                0,
+                false,
+                false,
+                None,
+                vec![],
+                false,
             ))
             .expect("scrape_all returns Ok even on connection refusal");
         assert_eq!(elements.len(), 1);
@@ -350,6 +501,12 @@ mod tests {
                 DEFAULT_USER_AGENT.into(),
                 100,
                 50,
+                0,
+                false,
+                false,
+                None,
+                vec![],
+                false,
             ))
             .expect("scrape_all handles concurrency=0");
         assert_eq!(errors.len(), 1);
@@ -369,6 +526,12 @@ mod tests {
                 DEFAULT_USER_AGENT.into(),
                 200,
                 100,
+                0,
+                false,
+                false,
+                None,
+                vec![],
+                false,
             ))
             .expect("scrape_all completes");
         assert_eq!(elements.len(), 50);
