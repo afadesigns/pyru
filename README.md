@@ -1,5 +1,3 @@
-# PyRu
-
 <div align="center">
   <img src="assets/banner.png" width="100%" alt="PyRu - High-performance Python web scraper">
 </div>
