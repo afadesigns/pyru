@@ -1,6 +1,8 @@
 <div align="center">
-  <img src="assets/banner.png" width="100%" alt="PyRu - High-performance Python web scraper">
+  <img src="assets/banner.png" alt="PyRu - High-performance Python web scraper" style="width: 100%; max-width: 1600px;">
 </div>
+
+<br>
 
 <p align="center">
   <a href="https://github.com/afadesigns/pyru/actions/workflows/ci.yml">
@@ -19,7 +21,10 @@
   <img src="https://img.shields.io/badge/rust-1.88%2B-orange.svg" alt="Rust 1.88+">
 </p>
 
-```
+## Quick Start
+
+```bash
+pip install pyru-scraper
 pyru scrape "https://example.com" -s "h1" -o json
 ```
 
