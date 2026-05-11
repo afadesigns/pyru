@@ -38,6 +38,7 @@ pyru scrape "https://example.com" -s "h1" -o json
 ## Design
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#4a90d9', 'primaryTextColor': '#fff', 'primaryBorderColor': '#4a90d9', 'lineColor': '#666', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#fff'}}}%%
 flowchart LR
   CLI["Python CLI<br/>(argparse, stdlib only)"] -->|await| Bridge["PyO3 bridge<br/>pyru._native"]
   Bridge -->|tokio::spawn| Fetch["reqwest<br/>rustls · HTTP/1.1 + HTTP/2<br/>gzip · brotli · zstd"]
@@ -46,6 +47,12 @@ flowchart LR
   Body -->|spawn_blocking| Parse["scraper<br/>CSS selectors over html5ever"]
   Parse --> Out["(elements, errors, latency_ms)"]
   Out -->|Bound&lt;'py, PyAny&gt;| CLI
+  style CLI fill:#e8f4f8,stroke:#4a90d9,stroke-width:2px
+  style Bridge fill:#4a90d9,stroke:#333,stroke-width:2px,color:#fff
+  style Fetch fill:#d4edda,stroke:#28a745,stroke-width:2px
+  style Pool fill:#fff3cd,stroke:#ffc107,stroke-width:2px
+  style Parse fill:#f8d7da,stroke:#dc3545,stroke-width:2px
+  style Out fill:#d1ecf1,stroke:#17a2b8,stroke-width:2px
 ```
 
 - **One async Python entry point.** The CLI hands a batch of URLs to a single `await scrape_urls_concurrent(...)` call. Everything below the await lives in Rust.
@@ -132,6 +139,7 @@ pyru scrape $(seq 1 50 | xargs -I{} echo "https://books.toscrape.com/catalogue/p
 
 ```python
 import asyncio
+from collections.abc import Sequence
 from pyru import scrape_urls_concurrent
 
 async def main() -> None:
